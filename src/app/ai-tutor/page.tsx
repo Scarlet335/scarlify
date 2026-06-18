@@ -1,18 +1,15 @@
 'use client';
+
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
-import Tesseract from 'tesseract.js';
-import * as pdfjsLib from 'pdfjs-dist';
 import { 
   Send, Loader2, ImageIcon, FileText, X, Trash2,
   Bot, User, Copy, Volume2, VolumeX, Mic, ChevronLeft, Plus, Camera
 } from 'lucide-react';
 import { useVoiceAssistant } from '@/hooks/useVoiceAssistant';
 
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-
+// Types remain the same
 interface Message {
     id: string;
     role: 'user' | 'assistant';
@@ -48,6 +45,7 @@ export default function ScarlifyAssistPage() {
     const [isPremium, setIsPremium] = useState(false);
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [isPlaying, setIsPlaying] = useState<string | null>(null);
+    const [isClient, setIsClient] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
@@ -62,6 +60,11 @@ export default function ScarlifyAssistPage() {
             setTimeout(() => sendMessage(), 100);
         }
     });
+
+    // Mark component as client-side only after mount
+    useEffect(() => {
+        setIsClient(true);
+    }, []);
 
     useEffect(() => {
         checkAuthAndQuota();
@@ -131,7 +134,10 @@ export default function ScarlifyAssistPage() {
         }
     };
 
+    // Client-side only text extraction functions
     const extractTextFromImage = async (file: File): Promise<string> => {
+        // Dynamically import Tesseract only on client
+        const Tesseract = (await import('tesseract.js')).default;
         const result = await Tesseract.recognize(file, 'eng', {
             logger: (m) => console.log(m)
         });
@@ -139,6 +145,11 @@ export default function ScarlifyAssistPage() {
     };
 
     const extractTextFromPDF = async (file: File): Promise<string> => {
+        // Dynamically import pdfjs-dist only on client
+        const pdfjsLib = await import('pdfjs-dist');
+        // Configure worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+        
         const arrayBuffer = await file.arrayBuffer();
         const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
         let fullText = '';
