@@ -1,4 +1,4 @@
-// src/app/admin/subscriptions/page.tsx
+// src/app/content-management/subscriptions/page.tsx
 
 'use client';
 import { useEffect, useState, useRef } from 'react';
@@ -10,7 +10,7 @@ import {
   ChevronRight, Mail, Send, RotateCcw, AlertTriangle,
   BarChart3, PieChart, Activity, Server, Phone,
   ArrowUpRight, ArrowDownRight, MoreVertical, Trash2,
-  Edit, User, Plus, Minus, Copy, FileText
+  Edit, User, Plus, Minus, Copy, FileText, Image
 } from 'lucide-react';
 
 // Toast notification component
@@ -21,10 +21,10 @@ const Toast = ({ message, type, onClose }: { message: string; type: 'success' | 
   }, [onClose]);
 
   const colors = {
-    success: 'bg-green-50 border-green-500 text-green-800',
-    error: 'bg-red-50 border-red-500 text-red-800',
-    info: 'bg-blue-50 border-blue-500 text-blue-800',
-    warning: 'bg-yellow-50 border-yellow-500 text-yellow-800'
+    success: 'bg-green-50 border-green-500 text-green-800 dark:bg-green-900/30 dark:border-green-700 dark:text-green-300',
+    error: 'bg-red-50 border-red-500 text-red-800 dark:bg-red-900/30 dark:border-red-700 dark:text-red-300',
+    info: 'bg-blue-50 border-blue-500 text-blue-800 dark:bg-blue-900/30 dark:border-blue-700 dark:text-blue-300',
+    warning: 'bg-yellow-50 border-yellow-500 text-yellow-800 dark:bg-yellow-900/30 dark:border-yellow-700 dark:text-yellow-300'
   };
 
   const icons = {
@@ -41,7 +41,7 @@ const Toast = ({ message, type, onClose }: { message: string; type: 'success' | 
         <div className="flex-1">
           <p className="text-sm font-medium">{message}</p>
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">
           <XCircle className="w-4 h-4" />
         </button>
       </div>
@@ -125,16 +125,17 @@ export default function SubscriptionsPage() {
   const [selectedStatus, setSelectedStatus] = useState('');
   const [selectedPlan, setSelectedPlan] = useState('');
   const [fapshiPayments, setFapshiPayments] = useState<any[]>([]);
+  const [manualPayments, setManualPayments] = useState<any[]>([]);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null);
   
-  // Phase 2: Date Range & Pagination
+  // Date Range & Pagination
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [showBulkActions, setShowBulkActions] = useState(false);
   
-  // Phase 3: Advanced features
+  // Advanced features
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
@@ -142,6 +143,7 @@ export default function SubscriptionsPage() {
   const [showRefundModal, setShowRefundModal] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<any>(null);
   const [refundReason, setRefundReason] = useState('');
+  const [showPaymentDetails, setShowPaymentDetails] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState({
     totalRevenue: 0,
     activeSubscriptions: 0,
@@ -168,7 +170,8 @@ export default function SubscriptionsPage() {
     await Promise.all([
       fetchSubscriptions(),
       fetchPayments(),
-      fetchFapshiPayments()
+      fetchFapshiPayments(),
+      fetchManualPayments()
     ]);
     setLoading(false);
   };
@@ -194,6 +197,34 @@ export default function SubscriptionsPage() {
     setSubscriptions(subscriptionData);
   };
 
+  // NEW: Fetch from the new 'payments' table for manual payments
+  const fetchManualPayments = async () => {
+    const { data, error } = await supabase
+      .from('payments')
+      .select(`
+        *,
+        profiles!user_id (
+          email,
+          full_name
+        )
+      `)
+      .eq('payment_method', 'manual')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching manual payments:', error);
+      setManualPayments([]);
+    } else {
+      const formattedData = data?.map(item => ({
+        ...item,
+        user_email: item.profiles?.email,
+        user_name: item.profiles?.full_name || 'Anonymous'
+      })) || [];
+      setManualPayments(formattedData);
+    }
+  };
+
+  // Keep old fetchPayments for backward compatibility
   const fetchPayments = async () => {
     const { data } = await supabase
       .from('payment_history')
@@ -205,15 +236,14 @@ export default function SubscriptionsPage() {
 
   const fetchFapshiPayments = async () => {
     const { data } = await supabase
-      .from('payment_history')
-      .select('*, profiles(email, full_name), subscriptions(plan, amount)')
-      .in('payment_method', ['fapshi_mtn', 'fapshi_orange'])
+      .from('payments')
+      .select('*, profiles!user_id(email, full_name)')
+      .eq('payment_method', 'fapshi')
       .order('created_at', { ascending: false });
     setFapshiPayments(data || []);
   };
 
   const fetchAnalytics = async () => {
-    // Calculate analytics from existing data
     const active = subscriptions.filter(s => s.status === 'active').length;
     const revenue = subscriptions.reduce((sum, sub) => {
       if (sub.plan === 'Premium') return sum + 1000;
@@ -221,7 +251,6 @@ export default function SubscriptionsPage() {
       return sum;
     }, 0);
     
-    // Generate monthly trend data
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const monthlyData = months.map((month, i) => ({
       month,
@@ -238,7 +267,6 @@ export default function SubscriptionsPage() {
   };
 
   const checkGatewayStatus = async () => {
-    // Simulate gateway status check
     const statuses = ['online', 'online', 'online', 'degraded'];
     setGatewayStatus(statuses[Math.floor(Math.random() * statuses.length)] as any);
   };
@@ -260,22 +288,23 @@ export default function SubscriptionsPage() {
     }
   };
 
+  // NEW: Verify manual payment from payments table
   const verifyManualPayment = async (paymentId: string, userId: string, amount: number) => {
     try {
+      // Update payment status
       await supabase
-        .from('payment_history')
+        .from('payments')
         .update({ 
-          status: 'completed',
-          metadata: { 
-            verified_at: new Date().toISOString(),
-            verified_by: 'admin'
-          }
+          status: 'paid',
+          updated_at: new Date().toISOString(),
+          admin_notes: 'Payment verified by admin'
         })
         .eq('id', paymentId);
       
+      // Get the plan from payment metadata
       const { data: payment } = await supabase
-        .from('payment_history')
-        .select('metadata')
+        .from('payments')
+        .select('plan_id, metadata')
         .eq('id', paymentId)
         .single();
       
@@ -284,24 +313,12 @@ export default function SubscriptionsPage() {
       const endDate = new Date();
       endDate.setDate(endDate.getDate() + planDuration);
 
-      await supabase
-        .from('subscriptions')
-        .insert({
-          user_id: userId,
-          plan: planId,
-          amount: amount,
-          status: 'active',
-          payment_method: 'manual_screenshot',
-          transaction_id: paymentId,
-          start_date: new Date().toISOString(),
-          end_date: endDate.toISOString(),
-        });
-
+      // Update subscription in profiles
       await supabase
         .from('profiles')
         .update({ 
           is_premium: true,
-          subscription_type: planId,
+          subscription_type: planId === 'premium' ? 'Premium' : 'Premium Annual',
           subscription_end_date: endDate.toISOString()
         })
         .eq('id', userId);
@@ -313,17 +330,21 @@ export default function SubscriptionsPage() {
     }
   };
 
+  // NEW: Reject manual payment
   const rejectManualPayment = async (paymentId: string) => {
     await supabase
-      .from('payment_history')
-      .update({ status: 'failed' })
+      .from('payments')
+      .update({ 
+        status: 'failed',
+        updated_at: new Date().toISOString()
+      })
       .eq('id', paymentId);
     
     showToast('Payment rejected.', 'warning');
     fetchAllData();
   };
 
-  // Phase 2: Bulk Actions
+  // Bulk Actions
   const handleBulkAction = async (action: 'upgrade' | 'downgrade' | 'delete') => {
     if (selectedUsers.length === 0) {
       showToast('No users selected', 'warning');
@@ -344,7 +365,7 @@ export default function SubscriptionsPage() {
     setShowBulkActions(false);
   };
 
-  // Phase 2: Export CSV
+  // Export CSV
   const exportCSV = () => {
     const headers = ['User', 'Email', 'Plan', 'Status', 'Amount', 'Expires'];
     const rows = subscriptions.map(sub => [
@@ -367,7 +388,7 @@ export default function SubscriptionsPage() {
     showToast('CSV exported successfully!', 'success');
   };
 
-  // Phase 3: Send Email Notification
+  // Send Email Notification
   const sendEmailNotification = async () => {
     if (!emailSubject || !emailBody) {
       showToast('Please fill in subject and body', 'warning');
@@ -375,7 +396,6 @@ export default function SubscriptionsPage() {
     }
 
     try {
-      // In production, call your email API
       showToast(`Email sent to ${emailRecipients.length} recipients`, 'success');
       setShowEmailModal(false);
       setEmailSubject('');
@@ -386,7 +406,7 @@ export default function SubscriptionsPage() {
     }
   };
 
-  // Phase 3: Process Refund
+  // Process Refund
   const processRefund = async () => {
     if (!refundReason) {
       showToast('Please provide a refund reason', 'warning');
@@ -394,7 +414,6 @@ export default function SubscriptionsPage() {
     }
 
     try {
-      // In production, call your refund API
       showToast(`Refund processed for ${selectedPayment?.amount} FCFA`, 'success');
       setShowRefundModal(false);
       setSelectedPayment(null);
@@ -422,12 +441,15 @@ export default function SubscriptionsPage() {
   const totalRevenue = analytics.totalRevenue;
   const activeSubscriptions = analytics.activeSubscriptions;
 
+  // Get pending manual payments count
+  const pendingManualCount = manualPayments.filter(p => p.status === 'pending_verification' || p.status === 'pending').length;
+
   if (loading) return <LoadingSkeleton />;
 
   const gatewayStatusConfig = {
-    online: { color: 'text-green-500', bg: 'bg-green-100', label: 'Online' },
-    offline: { color: 'text-red-500', bg: 'bg-red-100', label: 'Offline' },
-    degraded: { color: 'text-yellow-500', bg: 'bg-yellow-100', label: 'Degraded' }
+    online: { color: 'text-green-500', bg: 'bg-green-100 dark:bg-green-900/30', label: 'Online' },
+    offline: { color: 'text-red-500', bg: 'bg-red-100 dark:bg-red-900/30', label: 'Offline' },
+    degraded: { color: 'text-yellow-500', bg: 'bg-yellow-100 dark:bg-yellow-900/30', label: 'Degraded' }
   };
 
   return (
@@ -476,7 +498,7 @@ export default function SubscriptionsPage() {
       </div>
 
       {/* Gateway Status */}
-      <div className="mb-6 p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 flex items-center justify-between">
+      <div className="mb-6 p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-2">
           <Server className="w-5 h-5 text-gray-500" />
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Payment Gateway:</span>
@@ -496,7 +518,7 @@ export default function SubscriptionsPage() {
         </div>
       </div>
 
-      {/* Analytics Cards - Phase 3 */}
+      {/* Analytics Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <AnalyticsCard 
           title="Total Revenue" 
@@ -528,12 +550,12 @@ export default function SubscriptionsPage() {
         />
       </div>
 
-      {/* Chart - Phase 2 */}
+      {/* Chart */}
       <div className="mb-6">
         <SubscriptionChart data={analytics.monthlyData} />
       </div>
 
-      {/* Stats Cards - Phase 1 */}
+      {/* Stats Cards */}
       <div className="grid md:grid-cols-4 gap-4 mb-6">
         <div className="bg-white dark:bg-gray-800 rounded-xl p-5 border border-gray-200 dark:border-gray-700">
           <div className="flex items-center gap-3 mb-2">
@@ -556,7 +578,7 @@ export default function SubscriptionsPage() {
             <Zap className="w-5 h-5 text-blue-500" />
             <h3 className="font-semibold text-gray-700 dark:text-gray-300">Fapshi Auto</h3>
           </div>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white">{fapshiPayments.filter(p => p.status === 'completed').length}</p>
+          <p className="text-2xl font-bold text-gray-900 dark:text-white">{fapshiPayments.filter(p => p.status === 'paid').length}</p>
           <p className="text-sm text-gray-500 dark:text-gray-400">Automated payments</p>
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-xl p-5 border border-gray-200 dark:border-gray-700">
@@ -564,12 +586,12 @@ export default function SubscriptionsPage() {
             <Clock className="w-5 h-5 text-orange-500" />
             <h3 className="font-semibold text-gray-700 dark:text-gray-300">Pending Manual</h3>
           </div>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white">{payments.filter(p => p.status === 'pending').length}</p>
+          <p className="text-2xl font-bold text-gray-900 dark:text-white">{pendingManualCount}</p>
           <p className="text-sm text-gray-500 dark:text-gray-400">Awaiting verification</p>
         </div>
       </div>
 
-      {/* Date Range Filters - Phase 2 */}
+      {/* Date Range Filters */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 mb-6 border border-gray-200 dark:border-gray-700">
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-2">
@@ -597,6 +619,59 @@ export default function SubscriptionsPage() {
           </button>
         </div>
       </div>
+
+      {/* MANUAL PAYMENTS SECTION (NEW - From payments table) */}
+      {manualPayments.filter(p => p.status === 'pending_verification' || p.status === 'pending').length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-900 dark:text-white">
+            <Clock className="w-5 h-5 text-orange-500" />
+            Manual Payments Pending Verification ({pendingManualCount})
+            <span className="text-sm font-normal text-gray-500 dark:text-gray-400 ml-2">⏳ 24-48 hours processing</span>
+          </h2>
+          <div className="space-y-4">
+            {manualPayments.filter(p => p.status === 'pending_verification' || p.status === 'pending').map((payment) => (
+              <div key={payment.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-5 border-l-4 border-orange-500">
+                <div className="flex flex-wrap justify-between items-start gap-4">
+                  <div className="flex-1">
+                    <p className="font-semibold text-gray-900 dark:text-white">{payment.user_name || 'Anonymous'}</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">{payment.user_email}</p>
+                    <p className="text-sm mt-1 text-gray-700 dark:text-gray-300">💰 {payment.amount.toLocaleString()} FCFA</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">📅 {new Date(payment.created_at).toLocaleString()}</p>
+                    {payment.transaction_id && (
+                      <p className="text-xs text-gray-400 dark:text-gray-500">Transaction ID: {payment.transaction_id}</p>
+                    )}
+                    {payment.phone_number && (
+                      <p className="text-xs text-gray-400 dark:text-gray-500">Phone: {payment.phone_number}</p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {payment.screenshot_url && (
+                      <button
+                        onClick={() => setShowPaymentDetails(payment.id)}
+                        className="text-blue-600 hover:underline text-sm flex items-center gap-1"
+                      >
+                        <Image className="w-4 h-4" /> View Screenshot
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => verifyManualPayment(payment.id, payment.user_id, payment.amount)} 
+                      className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 flex items-center gap-1"
+                    >
+                      <CheckCircle className="w-4 h-4" /> Verify
+                    </button>
+                    <button 
+                      onClick={() => rejectManualPayment(payment.id)} 
+                      className="border border-red-300 text-red-600 px-4 py-2 rounded-lg text-sm hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-1"
+                    >
+                      <XCircle className="w-4 h-4" /> Reject
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Fapshi Automated Payments Section */}
       {fapshiPayments.length > 0 && (
@@ -631,20 +706,20 @@ export default function SubscriptionsPage() {
                       </td>
                       <td className="p-3">
                         <span className="px-2 py-1 rounded-full text-xs font-semibold bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                          {payment.subscriptions?.plan || 'Premium'}
+                          {payment.plan_id === 'premium' ? 'Premium' : 'Premium Annual'}
                         </span>
                       </td>
                       <td className="p-3 font-medium text-gray-900 dark:text-white">{payment.amount.toLocaleString()} FCFA</td>
                       <td className="p-3">
                         <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                          payment.payment_method === 'fapshi_mtn' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' : 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400'
+                          payment.provider === 'mtn' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' : 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400'
                         }`}>
-                          {payment.payment_method === 'fapshi_mtn' ? 'MTN Money' : 'Orange Money'}
+                          {payment.provider === 'mtn' ? 'MTN Money' : 'Orange Money'}
                         </span>
                       </td>
                       <td className="p-3">
                         <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                          payment.status === 'completed' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 
+                          payment.status === 'paid' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 
                           payment.status === 'failed' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400'
                         }`}>
                           {payment.status}
@@ -674,13 +749,12 @@ export default function SubscriptionsPage() {
         </div>
       )}
 
-      {/* Manual Payment Section */}
+      {/* Old Payment History Section (Backward Compatible) */}
       {payments.filter(p => p.status === 'pending').length > 0 && (
         <div className="mb-8">
           <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-900 dark:text-white">
             <Clock className="w-5 h-5 text-orange-500" />
-            Manual Payments Pending Verification ({payments.filter(p => p.status === 'pending').length})
-            <span className="text-sm font-normal text-gray-500 dark:text-gray-400 ml-2">⏳ 24-48 hours processing</span>
+            Legacy Manual Payments ({payments.filter(p => p.status === 'pending').length})
           </h2>
           <div className="space-y-3">
             {payments.filter(p => p.status === 'pending').map((payment) => (
@@ -691,9 +765,6 @@ export default function SubscriptionsPage() {
                     <p className="text-sm text-gray-500 dark:text-gray-400">{payment.profiles?.email}</p>
                     <p className="text-sm mt-1 text-gray-700 dark:text-gray-300">💰 {payment.amount.toLocaleString()} FCFA</p>
                     <p className="text-xs text-gray-400 dark:text-gray-500">📅 {new Date(payment.created_at).toLocaleString()}</p>
-                    {payment.metadata?.planId && (
-                      <p className="text-xs text-gray-400 dark:text-gray-500">Plan: {payment.metadata.planId}</p>
-                    )}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {payment.metadata?.screenshotUrl && (
@@ -726,7 +797,30 @@ export default function SubscriptionsPage() {
         </div>
       )}
 
-      {/* Bulk Actions - Phase 2 */}
+      {/* Screenshot Modal */}
+      {showPaymentDetails && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4 flex justify-between items-center">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white">Payment Screenshot</h3>
+              <button onClick={() => setShowPaymentDetails(null)} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded">
+                <XCircle className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+              </button>
+            </div>
+            <div className="p-6">
+              {manualPayments.find(p => p.id === showPaymentDetails)?.screenshot_url && (
+                <img 
+                  src={manualPayments.find(p => p.id === showPaymentDetails)?.screenshot_url} 
+                  alt="Payment Screenshot" 
+                  className="w-full rounded-lg"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Actions */}
       {showBulkActions && selectedUsers.length > 0 && (
         <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl mb-6 border border-blue-200 dark:border-blue-800">
           <div className="flex flex-wrap items-center gap-4">
@@ -892,7 +986,7 @@ export default function SubscriptionsPage() {
           <div className="p-8 text-center text-gray-500 dark:text-gray-400">No subscriptions found.</div>
         )}
 
-        {/* Pagination - Phase 1 */}
+        {/* Pagination */}
         {totalPages > 1 && (
           <div className="flex items-center justify-between p-4 border-t border-gray-200 dark:border-gray-700">
             <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -937,7 +1031,7 @@ export default function SubscriptionsPage() {
         </div>
       </div>
 
-      {/* Email Modal - Phase 3 */}
+      {/* Email Modal */}
       {showEmailModal && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -1000,7 +1094,7 @@ export default function SubscriptionsPage() {
         </div>
       )}
 
-      {/* Refund Modal - Phase 3 */}
+      {/* Refund Modal */}
       {showRefundModal && selectedPayment && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-xl max-w-md w-full">

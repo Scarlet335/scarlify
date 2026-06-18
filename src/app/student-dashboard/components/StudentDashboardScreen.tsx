@@ -191,19 +191,57 @@ export default function StudentDashboardScreen() {
         setLoading(false);
     };
 
+    // ✅ UPDATED: Fetch from new 'payments' table
     const loadPaymentHistory = async () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
-        const { data } = await supabase
-            .from('payment_history')
-            .select('*')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(5);
-        
-        if (data) {
-            setPaymentHistory(data);
+        try {
+            // Try to get from new payments table first
+            const { data, error } = await supabase
+                .from('payments')
+                .select('*')
+                .eq('user_id', user.id)
+                .order('created_at', { ascending: false })
+                .limit(5);
+
+            if (error) {
+                // Fallback to old payment_history table if payments doesn't exist
+                const { data: oldData, error: oldError } = await supabase
+                    .from('payment_history')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .order('created_at', { ascending: false })
+                    .limit(5);
+                
+                if (!oldError && oldData) {
+                    // Map old data to match new format
+                    const mappedData = oldData.map(item => ({
+                        ...item,
+                        amount: item.amount || 0,
+                        status: item.status || 'completed',
+                        payment_method: item.payment_method || 'manual',
+                    }));
+                    setPaymentHistory(mappedData);
+                }
+                return;
+            }
+
+            if (data) {
+                // Format payment data for display
+                const formattedData = data.map(item => ({
+                    ...item,
+                    payment_method: item.payment_method === 'fapshi' ? 
+                        (item.provider === 'mtn' ? 'fapshi_mtn' : 'fapshi_orange') : 
+                        'manual_screenshot',
+                    status: item.status === 'paid' ? 'completed' : item.status,
+                }));
+                setPaymentHistory(formattedData);
+            }
+        } catch (err) {
+            console.error('Error loading payment history:', err);
+            // Fallback to empty array
+            setPaymentHistory([]);
         }
     };
 
@@ -452,21 +490,22 @@ export default function StudentDashboardScreen() {
                                 <div key={payment.id} className="flex items-center justify-between text-sm border-b border-gray-100 dark:border-gray-700 pb-2 last:border-0 last:pb-0">
                                     <div>
                                         <span className="font-medium text-gray-900 dark:text-white">
-                                            {payment.amount.toLocaleString()} FCFA
+                                            {payment.amount?.toLocaleString() || '0'} FCFA
                                         </span>
                                         <span className="text-gray-500 dark:text-gray-400 ml-2">
                                             {payment.payment_method === 'fapshi_mtn' ? 'MTN Money' : 
                                              payment.payment_method === 'fapshi_orange' ? 'Orange Money' : 
+                                             payment.payment_method === 'fapshi' ? 'Mobile Money' :
                                              'Manual Payment'}
                                         </span>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <span className={`px-2 py-0.5 rounded-full text-xs ${
-                                            payment.status === 'completed' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
-                                            payment.status === 'pending' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' :
+                                            payment.status === 'completed' || payment.status === 'paid' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
+                                            payment.status === 'pending' || payment.status === 'pending_verification' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' :
                                             'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
                                         }`}>
-                                            {payment.status}
+                                            {payment.status === 'paid' ? 'completed' : payment.status}
                                         </span>
                                         <span className="text-gray-400 dark:text-gray-500 text-xs">
                                             {new Date(payment.created_at).toLocaleDateString()}
@@ -494,7 +533,7 @@ export default function StudentDashboardScreen() {
                     <TodaysMission missions={todayMissions} />
                 </div>
 
-                {/* Stats Grid - Updated to match DashboardBentoGrid props */}
+                {/* Stats Grid */}
                 <div className="mb-6">
                     <DashboardBentoGrid 
                         streak={userStats.streak}
@@ -584,24 +623,24 @@ export default function StudentDashboardScreen() {
 
             <OfflineManager />
 
-            {/* Payment Modal - FIXED */}
+            {/* Payment Modal */}
             {showPayment && (
                 <PaymentModal
                     isOpen={showPayment}
                     onClose={() => setShowPayment(false)}
                     onSuccess={handlePaymentComplete}
-                    userEmail={userEmail}   // ✅ Added this
-                    userId={userEmail}      // ✅ Keep this
+                    userEmail={userEmail}
+                    userId={userEmail}
                     planId="premium" 
                 />
             )}
 
-            {/* Welcome Premium Modal - FIXED */}
+            {/* Welcome Premium Modal */}
             {showWelcome && (
                 <WelcomePremiumModal 
                     isOpen={showWelcome}
                     onClose={() => setShowWelcome(false)}
-                    userName={userName}  // ✅ Only this prop is needed
+                    userName={userName}
                 />
             )}
         </div>      
