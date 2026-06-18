@@ -1,8 +1,11 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { X, Smartphone, Upload, CheckCircle, Loader2, AlertCircle, ChevronDown, ChevronUp, Zap, ExternalLink, RefreshCw, HelpCircle } from 'lucide-react';
+import { 
+  X, Smartphone, Upload, CheckCircle, Loader2, AlertCircle, 
+  ChevronDown, ChevronUp, Zap, ExternalLink, RefreshCw, HelpCircle,
+  Image, File, Trash2, CreditCard, ShieldCheck, Clock
+} from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
-import Link from 'next/link';
 
 interface PaymentModalProps {
     isOpen: boolean;
@@ -13,7 +16,6 @@ interface PaymentModalProps {
     planId?: string;
 }
 
-// Payment Error Types
 type PaymentErrorType = {
     title: string;
     message: string;
@@ -40,6 +42,7 @@ export default function PaymentModal({
     const [success, setSuccess] = useState('');
     const [showBackupOption, setShowBackupOption] = useState(false);
     const [paymentError, setPaymentError] = useState<PaymentErrorType | null>(null);
+    const [redirecting, setRedirecting] = useState(false);
     
     // Manual payment states
     const [step, setStep] = useState<'info' | 'payment' | 'upload'>('info');
@@ -48,6 +51,7 @@ export default function PaymentModal({
     const [screenshot, setScreenshot] = useState<File | null>(null);
     const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
     const [requestId, setRequestId] = useState<string | null>(null);
+    const [uploadProgress, setUploadProgress] = useState(0);
     
     // Payment links (YOUR FAPSHI LINKS)
     const FAPSHI_LINKS = {
@@ -60,15 +64,14 @@ export default function PaymentModal({
     const BANK_DETAILS = {
         mtn: "671834918",
         orange: "671834918",
-        bankName: "Example Bank",
-        accountName: "Scarlify GCE",
+        bankName: "Scarlify GCE",
+        accountName: "Scarlify GCE Platform",
         accountNumber: "1234567890"
     };
 
     // --- CREATE PAYMENT RECORD ---
     const createPaymentRecord = async (status: string, method: string, transactionId?: string) => {
         try {
-            // Determine amount based on plan
             let amount = 1000;
             if (planId === 'pro' || planId === 'annual') {
                 amount = 5000;
@@ -85,6 +88,7 @@ export default function PaymentModal({
                     phone_number: phoneNumber || null,
                     provider: paymentMethod || null,
                     plan_id: planId,
+                    user_email: userEmail,
                     created_at: new Date().toISOString()
                 })
                 .select()
@@ -107,7 +111,7 @@ export default function PaymentModal({
                 .from('payments')
                 .select('*')
                 .eq('user_id', userId)
-                .eq('status', 'pending')
+                .in('status', ['pending', 'pending_verification'])
                 .order('created_at', { ascending: false })
                 .limit(1);
 
@@ -118,7 +122,19 @@ export default function PaymentModal({
                 const timeSince = Date.now() - new Date(pendingPayment.created_at).getTime();
                 const minutesSince = Math.floor(timeSince / (1000 * 60));
 
-                if (minutesSince < 10) {
+                if (pendingPayment.status === 'pending_verification') {
+                    setPaymentError({
+                        title: 'Payment Under Review',
+                        message: 'You have already submitted a manual payment. Our team is reviewing it.',
+                        suggestions: [
+                            'Please wait for admin verification (24-48 hours)',
+                            'Check your email for updates',
+                            'Contact support if you have questions'
+                        ],
+                        action: 'I Understand',
+                    });
+                    setShowBackupOption(true);
+                } else if (minutesSince < 10) {
                     setPaymentError({
                         title: 'Pending Payment',
                         message: `You have a pending payment from ${minutesSince} minutes ago. Please check your phone for the payment prompt.`,
@@ -158,9 +174,9 @@ export default function PaymentModal({
         setLoading(true);
         setError('');
         setPaymentError(null);
+        setRedirecting(true);
 
         try {
-            // Get the correct payment link based on plan
             let paymentLink;
             let planDisplayName = '';
             
@@ -175,23 +191,25 @@ export default function PaymentModal({
                 planDisplayName = 'Premium Annual';
             }
 
-            // Create payment record with 'pending' status
+            // Create payment record
             const payment = await createPaymentRecord('pending', 'fapshi');
 
-            if (!payment) {
-                throw new Error('Failed to create payment record');
-            }
-
-            // Store transaction ID in localStorage for callback
-            if (payment.id) {
+            if (payment?.id) {
                 localStorage.setItem('pending_payment', payment.id);
                 localStorage.setItem('pending_plan', planId || 'premium');
+                localStorage.setItem('pending_amount', payment.amount.toString());
             }
 
-            // Redirect to Fapshi payment page
-            window.location.href = paymentLink;
+            // Show redirecting message before redirect
+            setSuccess(`Redirecting to Fapshi for ${planDisplayName}...`);
+            
+            // Small delay to show the message
+            setTimeout(() => {
+                window.location.href = paymentLink;
+            }, 800);
             
         } catch (err: any) {
+            setRedirecting(false);
             setPaymentError({
                 title: 'Payment Failed',
                 message: 'We couldn\'t initiate your payment. Please try again or use manual payment.',
@@ -207,65 +225,6 @@ export default function PaymentModal({
         } finally {
             setLoading(false);
         }
-    };
-
-    // --- HANDLE FAPSHI PAYMENT FAILURE ---
-    const handleFapshiPaymentFailed = (reason: string) => {
-        let errorDetails: PaymentErrorType;
-
-        switch (reason) {
-            case 'insufficient_balance':
-                errorDetails = {
-                    title: 'Insufficient Balance',
-                    message: 'You don\'t have enough money in your mobile money account.',
-                    suggestions: [
-                        'Add money to your mobile money account',
-                        'Try using the other provider (MTN or Orange)',
-                        'Use the manual payment option below'
-                    ],
-                    action: 'Try Manual Payment',
-                };
-                break;
-            case 'rejected':
-                errorDetails = {
-                    title: 'Payment Rejected',
-                    message: 'You rejected the payment prompt on your phone.',
-                    suggestions: [
-                        'Try again and accept the payment prompt',
-                        'Check your phone for the payment request',
-                        'Use the manual payment option below'
-                    ],
-                    action: 'Try Again',
-                };
-                break;
-            case 'network_error':
-                errorDetails = {
-                    title: 'Network Error',
-                    message: 'There was a network issue during your payment.',
-                    suggestions: [
-                        'Check your internet connection',
-                        'Try again in a few minutes',
-                        'Use the manual payment option below'
-                    ],
-                    action: 'Retry',
-                };
-                break;
-            default:
-                errorDetails = {
-                    title: 'Payment Failed',
-                    message: 'We couldn\'t process your payment. Please try again.',
-                    suggestions: [
-                        'Check your phone for payment prompts',
-                        'Make sure you have sufficient balance',
-                        'Try using the other mobile money provider',
-                        'Use the manual payment option below'
-                    ],
-                    action: 'Try Again',
-                };
-        }
-
-        setPaymentError(errorDetails);
-        setShowBackupOption(true);
     };
 
     // --- MANUAL PAYMENT ---
@@ -286,6 +245,7 @@ export default function PaymentModal({
                 setRequestId(payment.id);
                 setStep('upload');
                 setError('');
+                setSuccess('Payment request created! Now upload your transaction details.');
             } else {
                 setError('Failed to create payment request');
             }
@@ -308,8 +268,14 @@ export default function PaymentModal({
 
         setLoading(true);
         setError('');
+        setUploadProgress(0);
 
         try {
+            // Simulate upload progress
+            const progressInterval = setInterval(() => {
+                setUploadProgress(prev => Math.min(prev + 10, 90));
+            }, 200);
+
             const fileExt = screenshot.name.split('.').pop();
             const fileName = `${userId}/${Date.now()}.${fileExt}`;
             
@@ -317,7 +283,11 @@ export default function PaymentModal({
                 .from('payment-screenshots')
                 .upload(fileName, screenshot);
 
+            clearInterval(progressInterval);
+            
             if (uploadError) throw uploadError;
+
+            setUploadProgress(95);
 
             const { data: { publicUrl } } = supabase.storage
                 .from('payment-screenshots')
@@ -334,8 +304,12 @@ export default function PaymentModal({
 
             if (updateError) throw updateError;
 
-            setSuccess('Payment submitted! Admin will verify within 24 hours.');
+            setUploadProgress(100);
+            setSuccess('✅ Payment submitted! Admin will verify within 24 hours.');
             
+            // Send notification to admin (you can implement this later)
+            // await sendAdminNotification(userId, requestId);
+
             setTimeout(() => {
                 onSuccess();
                 onClose();
@@ -343,6 +317,7 @@ export default function PaymentModal({
             
         } catch (err: any) {
             setError(err.message || 'Failed to upload. Please try again.');
+            setUploadProgress(0);
         } finally {
             setLoading(false);
         }
@@ -360,18 +335,38 @@ export default function PaymentModal({
         setScreenshot(null);
         setScreenshotPreview(null);
         setRequestId(null);
+        setUploadProgress(0);
+        setRedirecting(false);
     };
 
     const handleScreenshotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
+            // Validate file size (max 5MB)
+            if (file.size > 5 * 1024 * 1024) {
+                setError('File too large. Maximum size is 5MB.');
+                return;
+            }
+            // Validate file type
+            if (!file.type.startsWith('image/')) {
+                setError('Please upload an image file (PNG, JPG, JPEG)');
+                return;
+            }
             setScreenshot(file);
             const reader = new FileReader();
             reader.onloadend = () => {
                 setScreenshotPreview(reader.result as string);
             };
             reader.readAsDataURL(file);
+            setError('');
         }
+    };
+
+    const removeScreenshot = () => {
+        setScreenshot(null);
+        setScreenshotPreview(null);
+        const fileInput = document.getElementById('screenshot-upload') as HTMLInputElement;
+        if (fileInput) fileInput.value = '';
     };
 
     useEffect(() => {
@@ -382,33 +377,49 @@ export default function PaymentModal({
 
     if (!isOpen) return null;
 
-    // Get plan display info
     const getPlanInfo = () => {
         switch(planId) {
             case 'premium':
-                return { name: 'Premium Monthly', amount: '1,000 FCFA', color: 'text-amber-600' };
+                return { name: 'Premium Monthly', amount: '1,000 FCFA', color: 'text-amber-600', duration: '30 days' };
             case 'pro':
-                return { name: 'Pro Annual', amount: '5,000 FCFA', color: 'text-purple-600' };
+                return { name: 'Pro Annual', amount: '5,000 FCFA', color: 'text-purple-600', duration: '365 days' };
             case 'annual':
-                return { name: 'Premium Annual', amount: '5,000 FCFA', color: 'text-indigo-600' };
+                return { name: 'Premium Annual', amount: '5,000 FCFA', color: 'text-indigo-600', duration: '365 days' };
             default:
-                return { name: 'Premium', amount: '1,000 FCFA', color: 'text-amber-600' };
+                return { name: 'Premium', amount: '1,000 FCFA', color: 'text-amber-600', duration: '30 days' };
         }
     };
 
     const planInfo = getPlanInfo();
 
+    // Format file size
+    const formatFileSize = (bytes: number) => {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    };
+
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-                <div className="sticky top-0 bg-white dark:bg-gray-800 border-b dark:border-gray-700 p-4 flex justify-between items-center">
-                    <h2 className="text-xl font-bold dark:text-white">Upgrade to {planInfo.name}</h2>
+                {/* Header */}
+                <div className="sticky top-0 bg-white dark:bg-gray-800 border-b dark:border-gray-700 p-4 flex justify-between items-center z-10">
+                    <div>
+                        <h2 className="text-xl font-bold dark:text-white flex items-center gap-2">
+                            <CreditCard className="w-5 h-5 text-blue-600" />
+                            Upgrade to {planInfo.name}
+                        </h2>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                            {planInfo.duration} access • {planInfo.amount}
+                        </p>
+                    </div>
                     <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
                         <X className="w-5 h-5 dark:text-gray-400" />
                     </button>
                 </div>
 
                 <div className="p-6">
+                    {/* Error/Success Messages */}
                     {error && !paymentError && (
                         <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg flex items-start text-sm border border-red-200 dark:border-red-800">
                             <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0 mt-0.5" />
@@ -419,9 +430,28 @@ export default function PaymentModal({
                         <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-lg flex items-center text-sm border border-green-200 dark:border-green-800">
                             <CheckCircle className="w-4 h-4 mr-2" />
                             <span>{success}</span>
+                            {redirecting && (
+                                <Loader2 className="w-4 h-4 ml-2 animate-spin" />
+                            )}
                         </div>
                     )}
 
+                    {/* Upload Progress */}
+                    {uploadProgress > 0 && uploadProgress < 100 && (
+                        <div className="mb-4">
+                            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                                <div 
+                                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                                    style={{ width: `${uploadProgress}%` }}
+                                />
+                            </div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">
+                                Uploading... {uploadProgress}%
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Payment Error Details */}
                     {paymentError && (
                         <div className="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
                             <div className="flex items-start gap-3">
@@ -447,9 +477,14 @@ export default function PaymentModal({
                                                 if (paymentError.action === 'Try Manual Payment') {
                                                     setShowBackupOption(true);
                                                     setPaymentError(null);
+                                                    setError('');
                                                 } else if (paymentError.action === 'Try Again') {
                                                     setPaymentError(null);
                                                     setError('');
+                                                    setShowBackupOption(false);
+                                                } else if (paymentError.action === 'I Understand') {
+                                                    setPaymentError(null);
+                                                    onClose();
                                                 } else {
                                                     setPaymentError(null);
                                                 }
@@ -465,16 +500,22 @@ export default function PaymentModal({
                         </div>
                     )}
 
+                    {/* PRIMARY PAYMENT FLOW - FAPSHI */}
                     {step === 'info' && !showBackupOption && !paymentError && (
                         <div className="space-y-4">
-                            <div className={`bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 p-3 rounded-lg border border-green-200 dark:border-green-800`}>
-                                <div className="flex items-center gap-2">
-                                    <Zap className="w-5 h-5 text-green-600 dark:text-green-400" />
+                            {/* Plan Info */}
+                            <div className="bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
+                                        <Zap className="w-5 h-5 text-white" />
+                                    </div>
                                     <div>
                                         <p className={`text-sm font-semibold ${planInfo.color} dark:text-green-300`}>
                                             {planInfo.name} - {planInfo.amount}
                                         </p>
-                                        <p className="text-xs text-green-700 dark:text-green-400">Pay with MTN/Orange Money & get instant access</p>
+                                        <p className="text-xs text-green-700 dark:text-green-400">
+                                            Pay with MTN/Orange Money • Instant access ⚡
+                                        </p>
                                     </div>
                                 </div>
                             </div>
@@ -484,29 +525,36 @@ export default function PaymentModal({
                                     Pay via Mobile Money
                                 </p>
                                 <p className="text-xs text-blue-700 dark:text-blue-400 mt-1">
-                                    You will be redirected to Fapshi to complete payment
+                                    You will be redirected to Fapshi to complete payment securely
                                 </p>
-                                <div className="mt-2 flex justify-center gap-2">
-                                    <span className="px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 rounded text-xs">MTN</span>
-                                    <span className="px-2 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 rounded text-xs">Orange</span>
+                                <div className="mt-3 flex justify-center gap-3">
+                                    <span className="px-3 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 rounded-full text-xs font-semibold">
+                                        MTN
+                                    </span>
+                                    <span className="px-3 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 rounded-full text-xs font-semibold">
+                                        Orange
+                                    </span>
                                 </div>
                             </div>
 
+                            {/* Payment Method Selection */}
                             <div>
-                                <label className="block text-sm font-medium dark:text-gray-300 mb-1">Select Payment Method</label>
+                                <label className="block text-sm font-medium dark:text-gray-300 mb-2">
+                                    Select Payment Method
+                                </label>
                                 <div className="grid grid-cols-2 gap-3">
                                     <button
                                         onClick={() => {
                                             setPaymentMethod('mtn');
                                             setError('');
                                         }}
-                                        className={`p-3 rounded-lg border-2 text-center transition-all ${
+                                        className={`p-4 rounded-lg border-2 text-center transition-all ${
                                             paymentMethod === 'mtn'
                                                 ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20 ring-2 ring-yellow-500'
                                                 : 'border-gray-200 dark:border-gray-700 hover:border-yellow-300 dark:hover:border-yellow-700'
                                         }`}
                                     >
-                                        <div className="text-2xl mb-1">📱</div>
+                                        <div className="text-3xl mb-1">📱</div>
                                         <div className="font-semibold text-sm dark:text-white">MTN Mobile Money</div>
                                         <div className="text-xs text-green-600 dark:text-green-400">✓ Instant</div>
                                     </button>
@@ -515,13 +563,13 @@ export default function PaymentModal({
                                             setPaymentMethod('orange');
                                             setError('');
                                         }}
-                                        className={`p-3 rounded-lg border-2 text-center transition-all ${
+                                        className={`p-4 rounded-lg border-2 text-center transition-all ${
                                             paymentMethod === 'orange'
                                                 ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20 ring-2 ring-orange-500'
                                                 : 'border-gray-200 dark:border-gray-700 hover:border-orange-300 dark:hover:border-orange-700'
                                         }`}
                                     >
-                                        <div className="text-2xl mb-1">📱</div>
+                                        <div className="text-3xl mb-1">📱</div>
                                         <div className="font-semibold text-sm dark:text-white">Orange Money</div>
                                         <div className="text-xs text-green-600 dark:text-green-400">✓ Instant</div>
                                     </button>
@@ -532,8 +580,11 @@ export default function PaymentModal({
                                 </p>
                             </div>
 
+                            {/* Phone Number Input */}
                             <div>
-                                <label className="block text-sm font-medium dark:text-gray-300 mb-1">Your Phone Number (Optional)</label>
+                                <label className="block text-sm font-medium dark:text-gray-300 mb-1">
+                                    Your Phone Number <span className="text-gray-400 text-xs">(Optional)</span>
+                                </label>
                                 <input
                                     type="tel"
                                     placeholder="6XXXXXXXX or 7XXXXXXXX"
@@ -542,26 +593,27 @@ export default function PaymentModal({
                                         setPhoneNumber(e.target.value.replace(/\D/g, ''));
                                         if (error) setError('');
                                     }}
-                                    className="w-full border dark:border-gray-700 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none dark:bg-gray-700 dark:text-white"
+                                    className="w-full border dark:border-gray-700 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none dark:bg-gray-700 dark:text-white"
                                 />
                                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                     Enter your phone number for reference (you'll enter it again on Fapshi)
                                 </p>
                             </div>
 
+                            {/* Pay Button */}
                             <button
                                 onClick={initiateFapshiPayment}
                                 disabled={loading || !paymentMethod}
-                                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:from-blue-700 hover:to-indigo-700 transition-colors flex items-center justify-center gap-2"
+                                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3.5 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:from-blue-700 hover:to-indigo-700 transition-all flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
                             >
                                 {loading ? (
                                     <>
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                        Processing...
+                                        <Loader2 className="w-5 h-5 animate-spin" />
+                                        {redirecting ? 'Redirecting...' : 'Processing...'}
                                     </>
                                 ) : (
                                     <>
-                                        <ExternalLink className="w-4 h-4" />
+                                        <ExternalLink className="w-5 h-5" />
                                         Pay with Mobile Money
                                     </>
                                 )}
@@ -569,28 +621,28 @@ export default function PaymentModal({
 
                             <div className="text-center">
                                 <p className="text-xs text-gray-400 dark:text-gray-500">
-                                    You'll be redirected to Fapshi to complete payment securely
-                                </p>
-                                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                                    ⏱️ Payment confirmation takes 1-2 minutes
+                                    🔒 Securely redirected to Fapshi • 1-2 minutes
                                 </p>
                             </div>
 
-                            <div className="mt-2">
+                            {/* Backup Option */}
+                            <div className="mt-3 pt-3 border-t dark:border-gray-700">
                                 <button
                                     onClick={() => {
                                         setShowBackupOption(true);
                                         setPaymentError(null);
                                     }}
-                                    className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 flex items-center justify-center w-full"
+                                    className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 flex items-center justify-center w-full gap-1"
                                 >
-                                    <span>Having payment issues?</span>
-                                    <ChevronDown className="w-4 h-4 ml-1" />
+                                    <HelpCircle className="w-4 h-4" />
+                                    Having payment issues? Click here
+                                    <ChevronDown className="w-4 h-4" />
                                 </button>
                             </div>
                         </div>
                     )}
 
+                    {/* BACKUP PAYMENT FLOW - MANUAL */}
                     {step === 'info' && showBackupOption && (
                         <div className="space-y-4">
                             <button
@@ -600,9 +652,9 @@ export default function PaymentModal({
                                 ← Back to instant payment
                             </button>
 
-                            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg">
-                                <div className="flex items-start">
-                                    <AlertCircle className="w-4 h-4 text-yellow-600 dark:text-yellow-400 mr-2 flex-shrink-0 mt-0.5" />
+                            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-4 rounded-lg">
+                                <div className="flex items-start gap-3">
+                                    <Clock className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
                                     <div>
                                         <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-300">Manual Payment - 24-48 Hours</p>
                                         <p className="text-xs text-yellow-700 dark:text-yellow-400 mt-1">
@@ -612,24 +664,27 @@ export default function PaymentModal({
                                 </div>
                             </div>
 
-                            <div className="space-y-3">
-                                <div className="border dark:border-gray-700 rounded-lg p-3">
-                                    <p className="font-semibold text-sm dark:text-gray-300">MTN Mobile Money:</p>
-                                    <p className="text-lg font-mono mt-1 dark:text-white">{BANK_DETAILS.mtn}</p>
-                                </div>
-                                <div className="border dark:border-gray-700 rounded-lg p-3">
-                                    <p className="font-semibold text-sm dark:text-gray-300">Orange Money:</p>
-                                    <p className="text-lg font-mono mt-1 dark:text-white">{BANK_DETAILS.orange}</p>
+                            <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
+                                <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Send payment to:</p>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-center p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700">
+                                        <span className="text-sm font-medium text-gray-600 dark:text-gray-400">MTN Mobile Money</span>
+                                        <span className="text-sm font-mono font-bold text-gray-900 dark:text-white">{BANK_DETAILS.mtn}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700">
+                                        <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Orange Money</span>
+                                        <span className="text-sm font-mono font-bold text-gray-900 dark:text-white">{BANK_DETAILS.orange}</span>
+                                    </div>
                                 </div>
                             </div>
 
-                            <div className="bg-gray-50 dark:bg-gray-700/50 p-3 rounded-lg">
-                                <p className="text-xs text-gray-600 dark:text-gray-400">After sending money, you'll need to:</p>
-                                <ol className="text-xs text-gray-600 dark:text-gray-400 mt-2 space-y-1 list-decimal list-inside">
+                            <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
+                                <p className="text-xs text-blue-700 dark:text-blue-400 font-medium">📋 After sending money:</p>
+                                <ol className="text-xs text-blue-600 dark:text-blue-300 mt-1 space-y-1 list-decimal list-inside">
                                     <li>Take a screenshot of the transaction confirmation</li>
-                                    <li>Enter your phone number and transaction ID</li>
+                                    <li>Enter your phone number and transaction ID below</li>
                                     <li>Upload the screenshot</li>
-                                    <li>Wait for admin verification (within 24 hours)</li>
+                                    <li>Wait for admin verification (within 24-48 hours)</li>
                                 </ol>
                             </div>
 
@@ -638,20 +693,20 @@ export default function PaymentModal({
                                 <div className="flex gap-3">
                                     <button
                                         onClick={() => setProvider('MTN')}
-                                        className={`flex-1 py-2 rounded-lg border font-semibold ${
+                                        className={`flex-1 py-2.5 rounded-lg border font-semibold transition-all ${
                                             provider === 'MTN'
-                                                ? 'border-primary bg-primary/10 text-primary'
-                                                : 'border-gray-300 dark:border-gray-700 dark:text-gray-300'
+                                                ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400'
+                                                : 'border-gray-300 dark:border-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                                         }`}
                                     >
                                         MTN
                                     </button>
                                     <button
                                         onClick={() => setProvider('Orange')}
-                                        className={`flex-1 py-2 rounded-lg border font-semibold ${
+                                        className={`flex-1 py-2.5 rounded-lg border font-semibold transition-all ${
                                             provider === 'Orange'
-                                                ? 'border-primary bg-primary/10 text-primary'
-                                                : 'border-gray-300 dark:border-gray-700 dark:text-gray-300'
+                                                ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400'
+                                                : 'border-gray-300 dark:border-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                                         }`}
                                     >
                                         Orange
@@ -665,71 +720,95 @@ export default function PaymentModal({
                                     type="tel"
                                     placeholder="6XXXXXXXX"
                                     value={phoneNumber}
-                                    onChange={(e) => setPhoneNumber(e.target.value)}
-                                    className="w-full border dark:border-gray-700 rounded-lg p-2 dark:bg-gray-700 dark:text-white"
+                                    onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
+                                    className="w-full border dark:border-gray-700 rounded-lg p-3 dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                                 />
                             </div>
 
                             <button
                                 onClick={initiateManualPayment}
-                                disabled={loading}
-                                className="w-full bg-gray-600 dark:bg-gray-700 text-white py-3 rounded-xl font-semibold disabled:opacity-50 flex items-center justify-center gap-2 hover:bg-gray-700 dark:hover:bg-gray-600 transition-colors"
+                                disabled={loading || !phoneNumber}
+                                className="w-full bg-gray-700 dark:bg-gray-600 text-white py-3.5 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-800 dark:hover:bg-gray-500 transition-all flex items-center justify-center gap-2"
                             >
-                                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'I Have Sent Payment →'}
-                                {loading ? 'Processing...' : ''}
+                                {loading ? (
+                                    <>
+                                        <Loader2 className="w-5 h-5 animate-spin" />
+                                        Processing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <ShieldCheck className="w-5 h-5" />
+                                        I Have Sent Payment →
+                                    </>
+                                )}
                             </button>
                         </div>
                     )}
 
+                    {/* UPLOAD SCREENSHOT STEP */}
                     {step === 'upload' && (
                         <div className="space-y-4">
                             <button
                                 onClick={() => {
                                     setStep('info');
                                     setShowBackupOption(true);
+                                    setSuccess('');
                                 }}
                                 className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 flex items-center gap-1"
                             >
                                 ← Back
                             </button>
 
-                            <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-lg border border-green-200 dark:border-green-800">
-                                <p className="text-sm font-semibold text-green-800 dark:text-green-300">Payment Initiated</p>
-                                <p className="text-xs text-green-700 dark:text-green-400 mt-1">Now upload your transaction details</p>
+                            <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
+                                <div className="flex items-start gap-3">
+                                    <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-green-800 dark:text-green-300">Payment Initiated</p>
+                                        <p className="text-xs text-green-700 dark:text-green-400 mt-1">
+                                            Now upload your transaction details for verification
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium dark:text-gray-300 mb-1">Transaction ID / Reference</label>
+                                <label className="block text-sm font-medium dark:text-gray-300 mb-1">
+                                    Transaction ID / Reference <span className="text-red-500">*</span>
+                                </label>
                                 <input
                                     type="text"
                                     placeholder="e.g., TRX-12345678"
                                     value={transactionId}
                                     onChange={(e) => setTransactionId(e.target.value)}
-                                    className="w-full border dark:border-gray-700 rounded-lg p-2 dark:bg-gray-700 dark:text-white"
+                                    className="w-full border dark:border-gray-700 rounded-lg p-3 dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium dark:text-gray-300 mb-1">Payment Screenshot</label>
+                                <label className="block text-sm font-medium dark:text-gray-300 mb-1">
+                                    Payment Screenshot <span className="text-red-500">*</span>
+                                </label>
                                 {screenshotPreview ? (
-                                    <div className="relative">
+                                    <div className="relative border dark:border-gray-700 rounded-lg overflow-hidden">
                                         <img 
                                             src={screenshotPreview} 
                                             alt="Payment screenshot" 
-                                            className="max-h-48 object-cover rounded-lg mx-auto border dark:border-gray-700"
+                                            className="w-full max-h-64 object-contain bg-gray-50 dark:bg-gray-800"
                                         />
-                                        <button
-                                            onClick={() => {
-                                                setScreenshot(null);
-                                                setScreenshotPreview(null);
-                                            }}
-                                            className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
-                                        >
-                                            <X className="w-4 h-4" />
-                                        </button>
+                                        <div className="absolute bottom-2 left-2 right-2 flex justify-between items-center bg-black/70 p-2 rounded-lg">
+                                            <span className="text-xs text-white truncate">
+                                                {screenshot?.name} ({formatFileSize(screenshot?.size || 0)})
+                                            </span>
+                                            <button
+                                                onClick={removeScreenshot}
+                                                className="p-1 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
                                     </div>
                                 ) : (
-                                    <div className="border-2 border-dashed dark:border-gray-700 rounded-lg p-6 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-colors">
+                                    <div className="border-2 border-dashed dark:border-gray-700 rounded-lg p-8 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-all cursor-pointer">
                                         <input
                                             type="file"
                                             accept="image/*"
@@ -738,9 +817,10 @@ export default function PaymentModal({
                                             id="screenshot-upload"
                                         />
                                         <label htmlFor="screenshot-upload" className="cursor-pointer">
-                                            <Upload className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-2" />
-                                            <p className="text-sm text-gray-600 dark:text-gray-400">Click to upload screenshot</p>
-                                            <p className="text-xs text-gray-400 dark:text-gray-500">PNG, JPG up to 5MB</p>
+                                            <Upload className="w-14 h-14 text-gray-400 dark:text-gray-500 mx-auto mb-3" />
+                                            <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Click to upload screenshot</p>
+                                            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">PNG, JPG, JPEG • Max 5MB</p>
+                                            <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">📱 Take a screenshot of your transaction confirmation</p>
                                         </label>
                                     </div>
                                 )}
@@ -748,21 +828,28 @@ export default function PaymentModal({
 
                             <button
                                 onClick={uploadManualScreenshot}
-                                disabled={loading}
-                                className="w-full bg-primary text-white py-3 rounded-xl font-semibold disabled:opacity-50 flex items-center justify-center gap-2 hover:opacity-90 transition-colors"
+                                disabled={loading || !transactionId || !screenshot}
+                                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3.5 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:from-green-700 hover:to-emerald-700 transition-all flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
                             >
                                 {loading ? (
                                     <>
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                        Uploading...
+                                        <Loader2 className="w-5 h-5 animate-spin" />
+                                        {uploadProgress > 0 ? `Uploading ${uploadProgress}%` : 'Uploading...'}
                                     </>
                                 ) : (
                                     <>
-                                        <Upload className="w-4 h-4" />
+                                        <Upload className="w-5 h-5" />
                                         Submit for Verification
                                     </>
                                 )}
                             </button>
+
+                            <div className="text-center">
+                                <p className="text-xs text-gray-400 dark:text-gray-500 flex items-center justify-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    Admin verification: 24-48 hours • You'll receive an email confirmation
+                                </p>
+                            </div>
                         </div>
                     )}
                 </div>
