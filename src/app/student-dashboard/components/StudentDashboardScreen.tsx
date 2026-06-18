@@ -378,12 +378,13 @@ export default function StudentDashboardScreen() {
                                         <Lock className="w-4 h-4" />
                                         Free Plan
                                     </div>
-                                    <Link href="/subscription-plans">
-                                        <button className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-1 rounded-full text-sm font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all">
-                                            <Zap className="w-4 h-4" />
-                                            Upgrade Now
-                                        </button>
-                                    </Link>
+                                    <button 
+                                        onClick={() => setShowPayment(true)}
+                                        className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-1 rounded-full text-sm font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all"
+>
+                              <Zap className="w-4 h-4" />
+                                Upgrade Now
+                                    </button>
                                 </>
                             )}
                         </div>
