@@ -3,11 +3,23 @@ import React, { useState } from 'react';
 import {
   LayoutDashboard, BookOpen, FileQuestion, Brain, Users, CreditCard,
   Settings, ChevronLeft, ChevronRight, BarChart3, Upload, Tag, LogOut, Shield, MessageCircle, ShieldAlert,
-  Megaphone
+  Megaphone, Menu, X
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 
-export default function AdminSidebar({ activeTab, setActiveTab }: { activeTab?: string; setActiveTab?: (tab: string) => void }) {
+interface AdminSidebarProps {
+  activeTab?: string;
+  setActiveTab?: (tab: string) => void;
+  isMobile?: boolean;
+  onClose?: () => void;
+}
+
+export default function AdminSidebar({ 
+  activeTab, 
+  setActiveTab,
+  isMobile = false,
+  onClose
+}: AdminSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const supabase = createClient();
 
@@ -27,9 +39,9 @@ export default function AdminSidebar({ activeTab, setActiveTab }: { activeTab?: 
       'Subscriptions': 'subscriptions',
       'Contact & Support': 'support',
       'Settings': 'settings',
-      'Super Admin': 'super-admin',  // ← ADDED THIS LINE
-      'Q&A Management': 'qa',  // ✅ ADD THIS LINE
-    'Feed Posts': 'feed-posts',  // ✅ Also add this if not already there
+      'Super Admin': 'super-admin',
+      'Q&A Management': 'qa',
+      'Feed Posts': 'feed-posts',
     };
     return tabMap[label] || label.toLowerCase().replace(/\s+/g, '-');
   };
@@ -78,6 +90,10 @@ export default function AdminSidebar({ activeTab, setActiveTab }: { activeTab?: 
     if (setActiveTab) {
       setActiveTab(tabId);
     }
+    // Close mobile sidebar after click
+    if (isMobile && onClose) {
+      onClose();
+    }
   };
 
   const handleLogout = async () => {
@@ -87,16 +103,28 @@ export default function AdminSidebar({ activeTab, setActiveTab }: { activeTab?: 
 
   return (
     <aside
-      className={`hidden lg:flex flex-col bg-card border-r border-border transition-all duration-300 ease-in-out shrink-0 ${
-        collapsed ? 'w-16' : 'w-60'
-      }`}
+      className={`
+        flex flex-col bg-card border-r border-border transition-all duration-300 ease-in-out shrink-0
+        ${isMobile ? 'w-64 shadow-2xl' : collapsed ? 'w-16' : 'w-60'}
+        ${isMobile ? 'flex' : 'hidden lg:flex'}
+      `}
     >
+      {/* Close button for mobile */}
+      {isMobile && onClose && (
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 p-2 rounded-lg hover:bg-muted z-10"
+        >
+          <X className="w-5 h-5 text-foreground" />
+        </button>
+      )}
+
       {/* Logo */}
-      <div className={`h-16 flex items-center border-b border-border px-4 gap-2.5 ${collapsed ? 'justify-center px-0' : ''}`}>
+      <div className={`h-16 flex items-center border-b border-border px-4 gap-2.5 ${collapsed && !isMobile ? 'justify-center px-0' : ''}`}>
         <div className="w-8 h-8 gradient-brand rounded-xl flex items-center justify-center shrink-0">
           <span className="text-white font-bold text-base">S</span>
         </div>
-        {!collapsed && (
+        {(!collapsed || isMobile) && (
           <div className="flex-1 min-w-0">
             <p className="font-extrabold text-base text-foreground tracking-tight leading-none">Scarlify</p>
             <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
@@ -110,7 +138,7 @@ export default function AdminSidebar({ activeTab, setActiveTab }: { activeTab?: 
       <nav className="flex-1 py-4 px-2 space-y-5 overflow-y-auto scrollbar-thin">
         {navGroups?.map((group) => (
           <div key={`navgroup-${group?.label}`}>
-            {!collapsed && (
+            {(!collapsed || isMobile) && (
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest px-3 mb-1.5">
                 {group?.label}
               </p>
@@ -123,15 +151,15 @@ export default function AdminSidebar({ activeTab, setActiveTab }: { activeTab?: 
                   <button
                     key={`sidenav-${item?.label}`}
                     onClick={() => handleNavClick(item.label)}
-                    title={collapsed ? item?.label : undefined}
+                    title={collapsed && !isMobile ? item?.label : undefined}
                     className={`w-full group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 ${
                       isActive
                         ? 'bg-primary/10 text-primary'
                         : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                    } ${collapsed ? 'justify-center' : ''}`}
+                    } ${collapsed && !isMobile ? 'justify-center' : ''}`}
                   >
                     <Icon className="w-4.5 h-4.5 shrink-0" size={18} />
-                    {!collapsed && (
+                    {(!collapsed || isMobile) && (
                       <>
                         <span className="flex-1 truncate text-left">{item?.label}</span>
                         {item?.badge && (
@@ -143,7 +171,7 @@ export default function AdminSidebar({ activeTab, setActiveTab }: { activeTab?: 
                         )}
                       </>
                     )}
-                    {collapsed && item?.badge && (
+                    {collapsed && !isMobile && item?.badge && (
                       <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full" />
                     )}
                   </button>
@@ -158,25 +186,27 @@ export default function AdminSidebar({ activeTab, setActiveTab }: { activeTab?: 
       <div className="border-t border-border p-2 space-y-0.5">
         <button
           onClick={() => handleNavClick('Settings')}
-          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors ${collapsed ? 'justify-center' : ''}`}
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors ${collapsed && !isMobile ? 'justify-center' : ''}`}
         >
           <Settings className="w-4.5 h-4.5 shrink-0" size={18} />
-          {!collapsed && <span>Settings</span>}
+          {(!collapsed || isMobile) && <span>Settings</span>}
         </button>
         <button
           onClick={handleLogout}
-          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-red-50 hover:text-danger transition-colors ${collapsed ? 'justify-center' : ''}`}
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-red-50 hover:text-danger transition-colors ${collapsed && !isMobile ? 'justify-center' : ''}`}
         >
           <LogOut className="w-4.5 h-4.5 shrink-0" size={18} />
-          {!collapsed && <span>Sign Out</span>}
+          {(!collapsed || isMobile) && <span>Sign Out</span>}
         </button>
-        <button
-          onClick={() => setCollapsed((p) => !p)}
-          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors ${collapsed ? 'justify-center' : 'justify-end'}`}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {collapsed ? <ChevronRight className="w-4 h-4" /> : <><span className="text-xs">Collapse</span><ChevronLeft className="w-4 h-4" /></>}
-        </button>
+        {!isMobile && (
+          <button
+            onClick={() => setCollapsed((p) => !p)}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors ${collapsed ? 'justify-center' : 'justify-end'}`}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? <ChevronRight className="w-4 h-4" /> : <><span className="text-xs">Collapse</span><ChevronLeft className="w-4 h-4" /></>}
+          </button>
+        )}
       </div>
     </aside>
   );
