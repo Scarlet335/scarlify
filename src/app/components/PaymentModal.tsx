@@ -50,14 +50,15 @@ export default function PaymentModal({
     const [showFallback, setShowFallback] = useState(false);
     const [paymentAttempted, setPaymentAttempted] = useState(false);
     
-    // Manual payment states
-    const [step, setStep] = useState<'info' | 'upload'>('info'); // Simplified
-    const [provider, setProvider] = useState<'MTN' | 'Orange'>('MTN');
+    // ✅ All manual payment states in one place
+    const [manualProvider, setManualProvider] = useState<'MTN' | 'Orange'>('MTN');
+    const [manualPhoneNumber, setManualPhoneNumber] = useState('');
     const [transactionId, setTransactionId] = useState('');
     const [screenshot, setScreenshot] = useState<File | null>(null);
     const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
     const [requestId, setRequestId] = useState<string | null>(null);
     const [uploadProgress, setUploadProgress] = useState(0);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     
     // Payment links
     const FAPSHI_LINKS = {
@@ -90,7 +91,7 @@ export default function PaymentModal({
                     payment_method: method,
                     status: status,
                     transaction_id: transactionId || null,
-                    phone_number: phoneNumber || null,
+                    phone_number: manualPhoneNumber || phoneNumber || null,
                     provider: paymentMethod || null,
                     plan_id: planId,
                     user_email: userEmail,
@@ -228,61 +229,42 @@ export default function PaymentModal({
         }
     };
 
-    // --- MANUAL PAYMENT ---
-    const initiateManualPayment = async () => {
-        console.log('🔍 initiateManualPayment called');
-        console.log('📝 phoneNumber:', phoneNumber);
+    // ✅ SUBMIT MANUAL PAYMENT (All-in-One)
+    const submitManualPayment = async () => {
+        console.log('🔍 submitManualPayment called');
         
-        if (!phoneNumber || phoneNumber.length < 9) {
-            setError('Enter a valid phone number');
+        // Validate all fields
+        if (!manualPhoneNumber || manualPhoneNumber.length < 9) {
+            setError('Please enter a valid phone number');
             return;
         }
-
-        setLoading(true);
-        setError('');
-
-        try {
-            console.log('📝 Creating payment record...');
-            
-            const payment = await createPaymentRecord('pending_verification', 'manual');
-
-            console.log('✅ Payment record:', payment);
-
-            if (payment) {
-                setRequestId(payment.id);
-                setStep('upload');  // ✅ This changes to upload step
-                setError('');
-                setSuccess('Payment request created! Now upload your transaction details.');
-                console.log('✅ Step changed to: upload');
-            } else {
-                setError('Failed to create payment request. Please try again.');
-            }
-        } catch (err: any) {
-            console.error('❌ Manual payment error:', err);
-            setError(err.message || 'Network error. Please try again.');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // --- UPLOAD MANUAL SCREENSHOT ---
-    const uploadManualScreenshot = async () => {
-        console.log('📤 uploadManualScreenshot called');
-        
         if (!transactionId) {
-            setError('Enter transaction ID');
+            setError('Please enter the transaction ID');
             return;
         }
         if (!screenshot) {
-            setError('Upload payment screenshot');
+            setError('Please upload a payment screenshot');
             return;
         }
 
-        setLoading(true);
+        setIsSubmitting(true);
         setError('');
         setUploadProgress(0);
 
         try {
+            // 1. Create payment record
+            console.log('📝 Creating payment record...');
+            const payment = await createPaymentRecord('pending_verification', 'manual', transactionId);
+
+            if (!payment) {
+                setError('Failed to create payment request. Please try again.');
+                setIsSubmitting(false);
+                return;
+            }
+
+            setRequestId(payment.id);
+
+            // 2. Upload screenshot
             const progressInterval = setInterval(() => {
                 setUploadProgress(prev => Math.min(prev + 10, 90));
             }, 200);
@@ -304,14 +286,14 @@ export default function PaymentModal({
                 .from('payment-screenshots')
                 .getPublicUrl(fileName);
 
+            // 3. Update payment record with screenshot URL
             const { error: updateError } = await supabase
                 .from('payments')
                 .update({
-                    transaction_id: transactionId,
                     screenshot_url: publicUrl,
                     status: 'pending_verification'
                 })
-                .eq('id', requestId);
+                .eq('id', payment.id);
 
             if (updateError) throw updateError;
 
@@ -327,16 +309,16 @@ export default function PaymentModal({
             }, 3000);
             
         } catch (err: any) {
-            console.error('❌ Upload error:', err);
-            setError(err.message || 'Failed to upload. Please try again.');
+            console.error('❌ Submission error:', err);
+            setError(err.message || 'Failed to submit. Please try again.');
             setUploadProgress(0);
         } finally {
-            setLoading(false);
+            setIsSubmitting(false);
         }
     };
 
+    // --- RESET ---
     const resetToPrimary = () => {
-        setStep('info');
         setShowBackupOption(false);
         setShowFallback(false);
         setError('');
@@ -344,6 +326,7 @@ export default function PaymentModal({
         setPaymentError(null);
         setPaymentMethod(null);
         setPhoneNumber('');
+        setManualPhoneNumber('');
         setTransactionId('');
         setScreenshot(null);
         setScreenshotPreview(null);
@@ -351,6 +334,7 @@ export default function PaymentModal({
         setUploadProgress(0);
         setRedirecting(false);
         setPaymentStatus('idle');
+        setIsSubmitting(false);
     };
 
     const handleScreenshotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -537,8 +521,8 @@ export default function PaymentModal({
                         </div>
                     )}
 
-                    {/* PRIMARY PAYMENT FLOW */}
-                    {step === 'info' && !showBackupOption && !paymentError && (
+                    {/* PRIMARY PAYMENT FLOW - FAPSHI */}
+                    {!showBackupOption && !paymentError && (
                         <div className="space-y-4">
                             <div className="bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
                                 <div className="flex items-center gap-3">
@@ -650,34 +634,32 @@ export default function PaymentModal({
                         </div>
                     )}
 
-                    {/* FALLBACK PAYMENT FLOW */}
-                    {step === 'info' && showBackupOption && (
+                    {/* ✅ ALL-IN-ONE FALLBACK PAYMENT FLOW */}
+                    {showBackupOption && (
                         <div className="space-y-4">
-                            {!showFallback && (
-                                <button
-                                    onClick={resetToPrimary}
-                                    className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 flex items-center gap-1"
-                                >
-                                    <ArrowLeft className="w-4 h-4" />
-                                    Back to instant payment
-                                </button>
-                            )}
+                            <button
+                                onClick={resetToPrimary}
+                                className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 flex items-center gap-1"
+                            >
+                                <ArrowLeft className="w-4 h-4" />
+                                Back to instant payment
+                            </button>
 
                             {showFallback && (
-                                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-4 rounded-lg">
+                                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg">
                                     <div className="flex items-start gap-3">
                                         <AlertTriangle className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
                                         <div>
                                             <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-300">Universal Fallback</p>
                                             <p className="text-xs text-yellow-700 dark:text-yellow-400 mt-1">
-                                                Payment link not working? Upload your proof here.
+                                                Payment link not working? Fill in the form below and upload your proof.
                                             </p>
                                         </div>
                                     </div>
                                 </div>
                             )}
 
-                            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-4 rounded-lg">
+                            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg">
                                 <div className="flex items-start gap-3">
                                     <Clock className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
                                     <div>
@@ -689,6 +671,7 @@ export default function PaymentModal({
                                 </div>
                             </div>
 
+                            {/* Bank Details */}
                             <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
                                 <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Send payment to:</p>
                                 <div className="space-y-2">
@@ -704,22 +687,23 @@ export default function PaymentModal({
                             </div>
 
                             <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
-                                <p className="text-xs text-blue-700 dark:text-blue-400 font-medium">📋 After sending money:</p>
+                                <p className="text-xs text-blue-700 dark:text-blue-400 font-medium">📋 Fill in all fields below:</p>
                                 <ol className="text-xs text-blue-600 dark:text-blue-300 mt-1 space-y-1 list-decimal list-inside">
-                                    <li>Take a screenshot of the transaction confirmation</li>
-                                    <li>Enter your phone number and transaction ID below</li>
-                                    <li>Upload the screenshot</li>
-                                    <li>Wait for admin verification (within 24-48 hours)</li>
+                                    <li>Enter your phone number</li>
+                                    <li>Enter the transaction ID from your payment</li>
+                                    <li>Upload a screenshot of the transaction confirmation</li>
+                                    <li>Submit for admin verification (within 24-48 hours)</li>
                                 </ol>
                             </div>
 
+                            {/* ✅ All fields in one place */}
                             <div>
                                 <label className="block text-sm font-medium dark:text-gray-300 mb-1">Your Mobile Money Provider</label>
                                 <div className="flex gap-3">
                                     <button
-                                        onClick={() => setProvider('MTN')}
+                                        onClick={() => setManualProvider('MTN')}
                                         className={`flex-1 py-2.5 rounded-lg border font-semibold transition-all ${
-                                            provider === 'MTN'
+                                            manualProvider === 'MTN'
                                                 ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400'
                                                 : 'border-gray-300 dark:border-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                                         }`}
@@ -727,9 +711,9 @@ export default function PaymentModal({
                                         MTN
                                     </button>
                                     <button
-                                        onClick={() => setProvider('Orange')}
+                                        onClick={() => setManualProvider('Orange')}
                                         className={`flex-1 py-2.5 rounded-lg border font-semibold transition-all ${
-                                            provider === 'Orange'
+                                            manualProvider === 'Orange'
                                                 ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400'
                                                 : 'border-gray-300 dark:border-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                                         }`}
@@ -740,61 +724,16 @@ export default function PaymentModal({
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium dark:text-gray-300 mb-1">Your Phone Number</label>
+                                <label className="block text-sm font-medium dark:text-gray-300 mb-1">
+                                    Your Phone Number <span className="text-red-500">*</span>
+                                </label>
                                 <input
                                     type="tel"
                                     placeholder="6XXXXXXXX"
-                                    value={phoneNumber}
-                                    onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
+                                    value={manualPhoneNumber}
+                                    onChange={(e) => setManualPhoneNumber(e.target.value.replace(/\D/g, ''))}
                                     className="w-full border dark:border-gray-700 rounded-lg p-3 dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                                 />
-                            </div>
-
-                            <button
-                                onClick={initiateManualPayment}
-                                disabled={loading || !phoneNumber}
-                                className="w-full bg-gray-700 dark:bg-gray-600 text-white py-3.5 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-800 dark:hover:bg-gray-500 transition-all flex items-center justify-center gap-2"
-                            >
-                                {loading ? (
-                                    <>
-                                        <Loader2 className="w-5 h-5 animate-spin" />
-                                        Processing...
-                                    </>
-                                ) : (
-                                    <>
-                                        <ShieldCheck className="w-5 h-5" />
-                                        I Have Sent Payment →
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    )}
-
-                    {/* UPLOAD SCREENSHOT STEP */}
-                    {step === 'upload' && (
-                        <div className="space-y-4">
-                            <button
-                                onClick={() => {
-                                    setStep('info');
-                                    setShowBackupOption(true);
-                                    setSuccess('');
-                                }}
-                                className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 flex items-center gap-1"
-                            >
-                                <ArrowLeft className="w-4 h-4" />
-                                Back
-                            </button>
-
-                            <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
-                                <div className="flex items-start gap-3">
-                                    <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-                                    <div>
-                                        <p className="text-sm font-semibold text-green-800 dark:text-green-300">Payment Initiated</p>
-                                        <p className="text-xs text-green-700 dark:text-green-400 mt-1">
-                                            Now upload your transaction details for verification
-                                        </p>
-                                    </div>
-                                </div>
                             </div>
 
                             <div>
@@ -819,7 +758,7 @@ export default function PaymentModal({
                                         <img 
                                             src={screenshotPreview} 
                                             alt="Payment screenshot" 
-                                            className="w-full max-h-64 object-contain bg-gray-50 dark:bg-gray-800"
+                                            className="w-full max-h-48 object-contain bg-gray-50 dark:bg-gray-800"
                                         />
                                         <div className="absolute bottom-2 left-2 right-2 flex justify-between items-center bg-black/70 p-2 rounded-lg">
                                             <span className="text-xs text-white truncate">
@@ -834,7 +773,7 @@ export default function PaymentModal({
                                         </div>
                                     </div>
                                 ) : (
-                                    <div className="border-2 border-dashed dark:border-gray-700 rounded-lg p-8 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-all cursor-pointer">
+                                    <div className="border-2 border-dashed dark:border-gray-700 rounded-lg p-6 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-all cursor-pointer">
                                         <input
                                             type="file"
                                             accept="image/*"
@@ -843,28 +782,28 @@ export default function PaymentModal({
                                             id="screenshot-upload"
                                         />
                                         <label htmlFor="screenshot-upload" className="cursor-pointer block">
-                                            <Upload className="w-14 h-14 text-gray-400 dark:text-gray-500 mx-auto mb-3" />
+                                            <Upload className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-2" />
                                             <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Click to upload screenshot</p>
-                                            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">PNG, JPG, JPEG • Max 5MB</p>
-                                            <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">📱 Take a screenshot of your transaction confirmation</p>
+                                            <p className="text-xs text-gray-400 dark:text-gray-500">PNG, JPG, JPEG • Max 5MB</p>
+                                            <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">📱 Take a screenshot of your transaction confirmation</p>
                                         </label>
                                     </div>
                                 )}
                             </div>
 
                             <button
-                                onClick={uploadManualScreenshot}
-                                disabled={loading || !transactionId || !screenshot}
+                                onClick={submitManualPayment}
+                                disabled={isSubmitting || !manualPhoneNumber || !transactionId || !screenshot}
                                 className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3.5 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:from-green-700 hover:to-emerald-700 transition-all flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
                             >
-                                {loading ? (
+                                {isSubmitting ? (
                                     <>
                                         <Loader2 className="w-5 h-5 animate-spin" />
-                                        {uploadProgress > 0 ? `Uploading ${uploadProgress}%` : 'Uploading...'}
+                                        {uploadProgress > 0 ? `Uploading ${uploadProgress}%` : 'Submitting...'}
                                     </>
                                 ) : (
                                     <>
-                                        <Upload className="w-5 h-5" />
+                                        <ShieldCheck className="w-5 h-5" />
                                         Submit for Verification
                                     </>
                                 )}
