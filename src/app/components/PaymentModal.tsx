@@ -3,7 +3,8 @@ import { useState, useEffect } from 'react';
 import { 
   X, Smartphone, Upload, CheckCircle, Loader2, AlertCircle, 
   ChevronDown, ChevronUp, Zap, ExternalLink, RefreshCw, HelpCircle,
-  Image, File, Trash2, CreditCard, ShieldCheck, Clock
+  Image, File, Trash2, CreditCard, ShieldCheck, Clock, ArrowLeft,
+  Link2, Phone, User, Calendar, AlertTriangle
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 
@@ -24,6 +25,8 @@ type PaymentErrorType = {
     actionLink?: string;
 };
 
+type PaymentStatus = 'idle' | 'redirecting' | 'success' | 'failed' | 'pending_verification';
+
 export default function PaymentModal({ 
     isOpen, 
     onClose, 
@@ -43,9 +46,12 @@ export default function PaymentModal({
     const [showBackupOption, setShowBackupOption] = useState(false);
     const [paymentError, setPaymentError] = useState<PaymentErrorType | null>(null);
     const [redirecting, setRedirecting] = useState(false);
+    const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('idle');
+    const [showFallback, setShowFallback] = useState(false);
+    const [paymentAttempted, setPaymentAttempted] = useState(false);
     
     // Manual payment states
-    const [step, setStep] = useState<'info' | 'payment' | 'upload'>('info');
+    const [step, setStep] = useState<'info' | 'upload'>('info'); // Simplified
     const [provider, setProvider] = useState<'MTN' | 'Orange'>('MTN');
     const [transactionId, setTransactionId] = useState('');
     const [screenshot, setScreenshot] = useState<File | null>(null);
@@ -53,14 +59,13 @@ export default function PaymentModal({
     const [requestId, setRequestId] = useState<string | null>(null);
     const [uploadProgress, setUploadProgress] = useState(0);
     
-    // Payment links (YOUR FAPSHI LINKS)
+    // Payment links
     const FAPSHI_LINKS = {
-        premium: 'https://pay.fapshi.com/44297647',      // 1,000 XAF (Monthly Premium)
-        pro: 'https://pay.fapshi.com/71177247',           // 5,000 XAF (Pro Annual)
-        annual: 'https://pay.fapshi.com/71177247'         // 5,000 XAF (Premium Annual)
+        premium: 'https://pay.fapshi.com/44297647',
+        pro: 'https://pay.fapshi.com/71177247',
+        annual: 'https://pay.fapshi.com/71177247'
     };
 
-    // YOUR BANK DETAILS for manual payment
     const BANK_DETAILS = {
         mtn: "671834918",
         orange: "671834918",
@@ -102,7 +107,7 @@ export default function PaymentModal({
         }
     };
 
-    // --- CHECK FOR EXISTING PENDING PAYMENT ---
+    // --- CHECK EXISTING PAYMENT ---
     const checkExistingPayment = async () => {
         if (!userId) return;
 
@@ -111,52 +116,51 @@ export default function PaymentModal({
                 .from('payments')
                 .select('*')
                 .eq('user_id', userId)
-                .in('status', ['pending', 'pending_verification'])
+                .in('status', ['pending', 'pending_verification', 'paid'])
                 .order('created_at', { ascending: false })
                 .limit(1);
 
             if (error) throw error;
 
             if (data && data.length > 0) {
-                const pendingPayment = data[0];
-                const timeSince = Date.now() - new Date(pendingPayment.created_at).getTime();
-                const minutesSince = Math.floor(timeSince / (1000 * 60));
+                const existing = data[0];
+                
+                if (existing.status === 'paid') {
+                    setPaymentError({
+                        title: 'Already Premium!',
+                        message: 'You already have an active premium subscription.',
+                        suggestions: ['Your account is already upgraded', 'Enjoy all premium features'],
+                        action: 'Go to Dashboard',
+                    });
+                    setShowBackupOption(true);
+                    return;
+                }
 
-                if (pendingPayment.status === 'pending_verification') {
+                if (existing.status === 'pending_verification') {
                     setPaymentError({
                         title: 'Payment Under Review',
                         message: 'You have already submitted a manual payment. Our team is reviewing it.',
-                        suggestions: [
-                            'Please wait for admin verification (24-48 hours)',
-                            'Check your email for updates',
-                            'Contact support if you have questions'
-                        ],
+                        suggestions: ['Please wait for admin verification (24-48 hours)', 'Check your email for updates'],
                         action: 'I Understand',
                     });
                     setShowBackupOption(true);
-                } else if (minutesSince < 10) {
-                    setPaymentError({
-                        title: 'Pending Payment',
-                        message: `You have a pending payment from ${minutesSince} minutes ago. Please check your phone for the payment prompt.`,
-                        suggestions: [
-                            'Check your phone for a payment request',
-                            'Make sure you have sufficient balance',
-                            'Wait for the payment confirmation'
-                        ],
-                        action: 'I\'ll check my phone',
-                    });
-                    setShowBackupOption(true);
-                } else {
-                    setPaymentError({
-                        title: 'Payment Expired',
-                        message: 'Your previous payment request has expired. Please try again.',
-                        suggestions: [
-                            'Try paying again with mobile money',
-                            'Use the manual payment option below'
-                        ],
-                        action: 'Try Again',
-                    });
-                    setShowBackupOption(true);
+                    return;
+                }
+
+                if (existing.status === 'pending') {
+                    const timeSince = Date.now() - new Date(existing.created_at).getTime();
+                    const minutesSince = Math.floor(timeSince / (1000 * 60));
+
+                    if (minutesSince < 10) {
+                        setPaymentError({
+                            title: 'Pending Payment',
+                            message: `You have a pending payment from ${minutesSince} minutes ago. Please check your phone.`,
+                            suggestions: ['Check your phone for a payment request', 'Make sure you have sufficient balance'],
+                            action: 'I\'ll check my phone',
+                        });
+                        setShowBackupOption(true);
+                        return;
+                    }
                 }
             }
         } catch (err) {
@@ -164,7 +168,7 @@ export default function PaymentModal({
         }
     };
 
-    // --- FAPSHI PAYMENT (DIRECT LINK) ---
+    // --- FAPSHI PAYMENT ---
     const initiateFapshiPayment = async () => {
         if (!paymentMethod) {
             setError('Please select a payment method');
@@ -175,6 +179,8 @@ export default function PaymentModal({
         setError('');
         setPaymentError(null);
         setRedirecting(true);
+        setPaymentStatus('redirecting');
+        setPaymentAttempted(true);
 
         try {
             let paymentLink;
@@ -191,37 +197,32 @@ export default function PaymentModal({
                 planDisplayName = 'Premium Annual';
             }
 
-            // Create payment record
             const payment = await createPaymentRecord('pending', 'fapshi');
 
             if (payment?.id) {
                 localStorage.setItem('pending_payment', payment.id);
                 localStorage.setItem('pending_plan', planId || 'premium');
                 localStorage.setItem('pending_amount', payment.amount.toString());
+                localStorage.setItem('payment_attempted', 'true');
             }
 
-            // Show redirecting message before redirect
             setSuccess(`Redirecting to Fapshi for ${planDisplayName}...`);
             
-            // Small delay to show the message
             setTimeout(() => {
                 window.location.href = paymentLink;
             }, 800);
             
         } catch (err: any) {
             setRedirecting(false);
-            setPaymentError({
-                title: 'Payment Failed',
-                message: 'We couldn\'t initiate your payment. Please try again or use manual payment.',
-                suggestions: [
-                    'Check your internet connection',
-                    'Make sure you have sufficient balance',
-                    'Try using the other mobile money provider'
-                ],
-                action: 'Try Manual Payment',
-            });
+            setPaymentStatus('failed');
+            setShowFallback(true);
             setShowBackupOption(true);
-            setError(err.message || 'Payment initiation failed. Please try manual payment.');
+            setPaymentError({
+                title: 'Payment Link Issue',
+                message: 'We couldn\'t open the payment link. Please upload your proof below.',
+                suggestions: ['Check your internet connection', 'Upload your payment proof below'],
+                action: 'Show Upload Option',
+            });
         } finally {
             setLoading(false);
         }
@@ -229,6 +230,9 @@ export default function PaymentModal({
 
     // --- MANUAL PAYMENT ---
     const initiateManualPayment = async () => {
+        console.log('🔍 initiateManualPayment called');
+        console.log('📝 phoneNumber:', phoneNumber);
+        
         if (!phoneNumber || phoneNumber.length < 9) {
             setError('Enter a valid phone number');
             return;
@@ -236,27 +240,35 @@ export default function PaymentModal({
 
         setLoading(true);
         setError('');
-        setPaymentError(null);
 
         try {
+            console.log('📝 Creating payment record...');
+            
             const payment = await createPaymentRecord('pending_verification', 'manual');
+
+            console.log('✅ Payment record:', payment);
 
             if (payment) {
                 setRequestId(payment.id);
-                setStep('upload');
+                setStep('upload');  // ✅ This changes to upload step
                 setError('');
                 setSuccess('Payment request created! Now upload your transaction details.');
+                console.log('✅ Step changed to: upload');
             } else {
-                setError('Failed to create payment request');
+                setError('Failed to create payment request. Please try again.');
             }
-        } catch (err) {
-            setError('Network error. Please try again.');
+        } catch (err: any) {
+            console.error('❌ Manual payment error:', err);
+            setError(err.message || 'Network error. Please try again.');
         } finally {
             setLoading(false);
         }
     };
 
+    // --- UPLOAD MANUAL SCREENSHOT ---
     const uploadManualScreenshot = async () => {
+        console.log('📤 uploadManualScreenshot called');
+        
         if (!transactionId) {
             setError('Enter transaction ID');
             return;
@@ -271,7 +283,6 @@ export default function PaymentModal({
         setUploadProgress(0);
 
         try {
-            // Simulate upload progress
             const progressInterval = setInterval(() => {
                 setUploadProgress(prev => Math.min(prev + 10, 90));
             }, 200);
@@ -305,10 +316,10 @@ export default function PaymentModal({
             if (updateError) throw updateError;
 
             setUploadProgress(100);
-            setSuccess('✅ Payment submitted! Admin will verify within 24 hours.');
+            setPaymentStatus('pending_verification');
+            setSuccess('✅ Payment submitted! Admin will verify within 24-48 hours.');
             
-            // Send notification to admin (you can implement this later)
-            // await sendAdminNotification(userId, requestId);
+            localStorage.removeItem('payment_attempted');
 
             setTimeout(() => {
                 onSuccess();
@@ -316,6 +327,7 @@ export default function PaymentModal({
             }, 3000);
             
         } catch (err: any) {
+            console.error('❌ Upload error:', err);
             setError(err.message || 'Failed to upload. Please try again.');
             setUploadProgress(0);
         } finally {
@@ -326,6 +338,7 @@ export default function PaymentModal({
     const resetToPrimary = () => {
         setStep('info');
         setShowBackupOption(false);
+        setShowFallback(false);
         setError('');
         setSuccess('');
         setPaymentError(null);
@@ -337,17 +350,16 @@ export default function PaymentModal({
         setRequestId(null);
         setUploadProgress(0);
         setRedirecting(false);
+        setPaymentStatus('idle');
     };
 
     const handleScreenshotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
-            // Validate file size (max 5MB)
             if (file.size > 5 * 1024 * 1024) {
                 setError('File too large. Maximum size is 5MB.');
                 return;
             }
-            // Validate file type
             if (!file.type.startsWith('image/')) {
                 setError('Please upload an image file (PNG, JPG, JPEG)');
                 return;
@@ -369,11 +381,41 @@ export default function PaymentModal({
         if (fileInput) fileInput.value = '';
     };
 
+    const formatFileSize = (bytes: number) => {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    };
+
     useEffect(() => {
         if (isOpen && userId) {
             checkExistingPayment();
+            const attempted = localStorage.getItem('payment_attempted');
+            if (attempted === 'true') {
+                setPaymentAttempted(true);
+                setShowFallback(true);
+                setShowBackupOption(true);
+            }
         }
     }, [isOpen, userId]);
+
+    // Auto-show fallback after redirect attempt
+    useEffect(() => {
+        if (paymentStatus === 'redirecting') {
+            const handleVisibilityChange = () => {
+                if (!document.hidden && paymentStatus === 'redirecting') {
+                    setTimeout(() => {
+                        setPaymentStatus('failed');
+                        setShowFallback(true);
+                        setShowBackupOption(true);
+                        setError('Payment not completed. You can upload proof below.');
+                    }, 1000);
+                }
+            };
+            document.addEventListener('visibilitychange', handleVisibilityChange);
+            return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+        }
+    }, [paymentStatus]);
 
     if (!isOpen) return null;
 
@@ -391,13 +433,6 @@ export default function PaymentModal({
     };
 
     const planInfo = getPlanInfo();
-
-    // Format file size
-    const formatFileSize = (bytes: number) => {
-        if (bytes < 1024) return bytes + ' B';
-        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    };
 
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -419,7 +454,7 @@ export default function PaymentModal({
                 </div>
 
                 <div className="p-6">
-                    {/* Error/Success Messages */}
+                    {/* Error/Success */}
                     {error && !paymentError && (
                         <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg flex items-start text-sm border border-red-200 dark:border-red-800">
                             <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0 mt-0.5" />
@@ -474,16 +509,18 @@ export default function PaymentModal({
                                     {paymentError.action && (
                                         <button
                                             onClick={() => {
-                                                if (paymentError.action === 'Try Manual Payment') {
+                                                if (paymentError.action === 'Show Upload Option') {
                                                     setShowBackupOption(true);
                                                     setPaymentError(null);
-                                                    setError('');
                                                 } else if (paymentError.action === 'Try Again') {
                                                     setPaymentError(null);
                                                     setError('');
                                                     setShowBackupOption(false);
+                                                    setShowFallback(false);
                                                 } else if (paymentError.action === 'I Understand') {
                                                     setPaymentError(null);
+                                                    onClose();
+                                                } else if (paymentError.action === 'Go to Dashboard') {
                                                     onClose();
                                                 } else {
                                                     setPaymentError(null);
@@ -500,10 +537,9 @@ export default function PaymentModal({
                         </div>
                     )}
 
-                    {/* PRIMARY PAYMENT FLOW - FAPSHI */}
+                    {/* PRIMARY PAYMENT FLOW */}
                     {step === 'info' && !showBackupOption && !paymentError && (
                         <div className="space-y-4">
-                            {/* Plan Info */}
                             <div className="bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
@@ -528,30 +564,20 @@ export default function PaymentModal({
                                     You will be redirected to Fapshi to complete payment securely
                                 </p>
                                 <div className="mt-3 flex justify-center gap-3">
-                                    <span className="px-3 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 rounded-full text-xs font-semibold">
-                                        MTN
-                                    </span>
-                                    <span className="px-3 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 rounded-full text-xs font-semibold">
-                                        Orange
-                                    </span>
+                                    <span className="px-3 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 rounded-full text-xs font-semibold">MTN</span>
+                                    <span className="px-3 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 rounded-full text-xs font-semibold">Orange</span>
                                 </div>
                             </div>
 
-                            {/* Payment Method Selection */}
                             <div>
-                                <label className="block text-sm font-medium dark:text-gray-300 mb-2">
-                                    Select Payment Method
-                                </label>
+                                <label className="block text-sm font-medium dark:text-gray-300 mb-2">Select Payment Method</label>
                                 <div className="grid grid-cols-2 gap-3">
                                     <button
-                                        onClick={() => {
-                                            setPaymentMethod('mtn');
-                                            setError('');
-                                        }}
+                                        onClick={() => { setPaymentMethod('mtn'); setError(''); }}
                                         className={`p-4 rounded-lg border-2 text-center transition-all ${
                                             paymentMethod === 'mtn'
                                                 ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20 ring-2 ring-yellow-500'
-                                                : 'border-gray-200 dark:border-gray-700 hover:border-yellow-300 dark:hover:border-yellow-700'
+                                                : 'border-gray-200 dark:border-gray-700 hover:border-yellow-300'
                                         }`}
                                     >
                                         <div className="text-3xl mb-1">📱</div>
@@ -559,14 +585,11 @@ export default function PaymentModal({
                                         <div className="text-xs text-green-600 dark:text-green-400">✓ Instant</div>
                                     </button>
                                     <button
-                                        onClick={() => {
-                                            setPaymentMethod('orange');
-                                            setError('');
-                                        }}
+                                        onClick={() => { setPaymentMethod('orange'); setError(''); }}
                                         className={`p-4 rounded-lg border-2 text-center transition-all ${
                                             paymentMethod === 'orange'
                                                 ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20 ring-2 ring-orange-500'
-                                                : 'border-gray-200 dark:border-gray-700 hover:border-orange-300 dark:hover:border-orange-700'
+                                                : 'border-gray-200 dark:border-gray-700 hover:border-orange-300'
                                         }`}
                                     >
                                         <div className="text-3xl mb-1">📱</div>
@@ -574,13 +597,8 @@ export default function PaymentModal({
                                         <div className="text-xs text-green-600 dark:text-green-400">✓ Instant</div>
                                     </button>
                                 </div>
-                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 text-center">
-                                    <HelpCircle className="w-3 h-3 inline mr-1" />
-                                    Don't have mobile money? Use the manual payment option below.
-                                </p>
                             </div>
 
-                            {/* Phone Number Input */}
                             <div>
                                 <label className="block text-sm font-medium dark:text-gray-300 mb-1">
                                     Your Phone Number <span className="text-gray-400 text-xs">(Optional)</span>
@@ -595,12 +613,8 @@ export default function PaymentModal({
                                     }}
                                     className="w-full border dark:border-gray-700 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none dark:bg-gray-700 dark:text-white"
                                 />
-                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    Enter your phone number for reference (you'll enter it again on Fapshi)
-                                </p>
                             </div>
 
-                            {/* Pay Button */}
                             <button
                                 onClick={initiateFapshiPayment}
                                 disabled={loading || !paymentMethod}
@@ -619,38 +633,49 @@ export default function PaymentModal({
                                 )}
                             </button>
 
-                            <div className="text-center">
-                                <p className="text-xs text-gray-400 dark:text-gray-500">
-                                    🔒 Securely redirected to Fapshi • 1-2 minutes
-                                </p>
-                            </div>
-
-                            {/* Backup Option */}
                             <div className="mt-3 pt-3 border-t dark:border-gray-700">
                                 <button
                                     onClick={() => {
                                         setShowBackupOption(true);
                                         setPaymentError(null);
+                                        setShowFallback(true);
                                     }}
                                     className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 flex items-center justify-center w-full gap-1"
                                 >
                                     <HelpCircle className="w-4 h-4" />
-                                    Having payment issues? Click here
+                                    Having payment issues? Upload proof instead
                                     <ChevronDown className="w-4 h-4" />
                                 </button>
                             </div>
                         </div>
                     )}
 
-                    {/* BACKUP PAYMENT FLOW - MANUAL */}
+                    {/* FALLBACK PAYMENT FLOW */}
                     {step === 'info' && showBackupOption && (
                         <div className="space-y-4">
-                            <button
-                                onClick={resetToPrimary}
-                                className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 flex items-center gap-1"
-                            >
-                                ← Back to instant payment
-                            </button>
+                            {!showFallback && (
+                                <button
+                                    onClick={resetToPrimary}
+                                    className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 flex items-center gap-1"
+                                >
+                                    <ArrowLeft className="w-4 h-4" />
+                                    Back to instant payment
+                                </button>
+                            )}
+
+                            {showFallback && (
+                                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-4 rounded-lg">
+                                    <div className="flex items-start gap-3">
+                                        <AlertTriangle className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
+                                        <div>
+                                            <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-300">Universal Fallback</p>
+                                            <p className="text-xs text-yellow-700 dark:text-yellow-400 mt-1">
+                                                Payment link not working? Upload your proof here.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
 
                             <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-4 rounded-lg">
                                 <div className="flex items-start gap-3">
@@ -756,7 +781,8 @@ export default function PaymentModal({
                                 }}
                                 className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 flex items-center gap-1"
                             >
-                                ← Back
+                                <ArrowLeft className="w-4 h-4" />
+                                Back
                             </button>
 
                             <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
@@ -816,7 +842,7 @@ export default function PaymentModal({
                                             className="hidden"
                                             id="screenshot-upload"
                                         />
-                                        <label htmlFor="screenshot-upload" className="cursor-pointer">
+                                        <label htmlFor="screenshot-upload" className="cursor-pointer block">
                                             <Upload className="w-14 h-14 text-gray-400 dark:text-gray-500 mx-auto mb-3" />
                                             <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Click to upload screenshot</p>
                                             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">PNG, JPG, JPEG • Max 5MB</p>
