@@ -5,6 +5,9 @@ const nextConfig = {
   productionBrowserSourceMaps: true,
   distDir: process.env.DIST_DIR || '.next',
 
+  // ✅ REMOVED: output: 'standalone'
+  // ✅ REMOVED: output: 'export'
+
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -16,6 +19,7 @@ const nextConfig = {
   images: {
     remotePatterns: imageHosts,
     minimumCacheTTL: 60,
+    unoptimized: true,
   },
 
   webpack(

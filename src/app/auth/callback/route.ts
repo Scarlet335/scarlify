@@ -1,3 +1,9 @@
+// src/app/auth/callback/page.tsx
+
+// ✅ ADD THESE 2 LINES AT THE VERY TOP
+export const dynamic = 'force-static';
+export const revalidate = false;
+
 import { createClient } from '@/utils/supabase/server';
 import { NextResponse } from 'next/server';
 
